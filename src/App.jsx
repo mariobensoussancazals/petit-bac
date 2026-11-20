@@ -14,6 +14,7 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Connexion et déconnexion
   useEffect(() => {
     let active = true;
 
@@ -35,6 +36,7 @@ export default function App() {
     };
   }, []);
 
+  // Récupérer le pseudo
   useEffect(() => {
     if (!session?.user?.id) {
       setPseudo('');
@@ -61,9 +63,13 @@ export default function App() {
     }
 
     loadProfile();
-    return () => { active = false; };
+
+    return () => {
+      active = false;
+    };
   }, [session?.user?.id]);
 
+  // Créer un compte ou se connecter
   async function handleAuth(action) {
     if (!email.trim() || !password) {
       setMessage('Renseigne ton e-mail et ton mot de passe.');
@@ -98,6 +104,7 @@ export default function App() {
     }
   }
 
+  // Enregistrer son pseudo
   async function savePseudo() {
     if (!session?.user) return;
 
@@ -120,6 +127,7 @@ export default function App() {
         });
 
       if (error) throw error;
+
       setPseudo(username);
       setMessage('Pseudo enregistré !');
     } catch (error) {
@@ -129,16 +137,19 @@ export default function App() {
     }
   }
 
+  // Générer un code de salon
   function generateCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     const values = new Uint32Array(6);
     crypto.getRandomValues(values);
 
-    return Array.from(values, value =>
-      chars[value % chars.length]
+    return Array.from(
+      values,
+      value => chars[value % chars.length]
     ).join('');
   }
 
+  // Créer un salon
   async function createRoom() {
     if (!session?.user) {
       setMessage('Tu dois être connecté.');
@@ -186,20 +197,20 @@ export default function App() {
       }
 
       const { error: playerError } = await supabase
-  .from('room_players')
-  .upsert(
-    {
-      room_id: created.id,
-      user_id: session.user.id
-    },
-    { onConflict: 'room_id,user_id' }
-  );
+        .from('room_players')
+        .upsert(
+          {
+            room_id: created.id,
+            user_id: session.user.id
+          },
+          { onConflict: 'room_id,user_id' }
+        );
 
-if (playerError) throw playerError;
+      if (playerError) throw playerError;
 
-setRoom(created);
-setCode(created.code);
-setMessage('Salon créé avec succès !');
+      setRoom(created);
+      setCode(created.code);
+      setMessage('Salon créé avec succès !');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -207,6 +218,7 @@ setMessage('Salon créé avec succès !');
     }
   }
 
+  // Rejoindre un salon
   async function joinRoom() {
     if (!session?.user) {
       setMessage('Tu dois être connecté.');
@@ -243,25 +255,27 @@ setMessage('Salon créé avec succès !');
       }
 
       if (data.status !== 'waiting') {
-        setMessage('Cette partie a déjà commencé ou est terminée.');
+        setMessage(
+          'Cette partie a déjà commencé ou est terminée.'
+        );
         return;
       }
 
       const { error: playerError } = await supabase
-  .from('room_players')
-  .upsert(
-    {
-      room_id: data.id,
-      user_id: session.user.id
-    },
-    { onConflict: 'room_id,user_id' }
-  );
+        .from('room_players')
+        .upsert(
+          {
+            room_id: data.id,
+            user_id: session.user.id
+          },
+          { onConflict: 'room_id,user_id' }
+        );
 
-if (playerError) throw playerError;
+      if (playerError) throw playerError;
 
-setRoom(data);
-setCode(data.code);
-setMessage('Tu as rejoint le salon !');
+      setRoom(data);
+      setCode(data.code);
+      setMessage('Tu as rejoint le salon !');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -269,65 +283,181 @@ setMessage('Tu as rejoint le salon !');
     }
   }
 
-useEffect(() => {
-  if (!room?.id) {
-    setPlayers([]);
-    return;
+  // Charger les joueurs du salon
+  async function loadPlayers(roomId) {
+    const { data, error } = await supabase
+      .from('room_players')
+      .select('user_id')
+      .eq('room_id', roomId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    const userIds = (data || []).map(
+      player => player.user_id
+    );
+
+    if (userIds.length === 0) {
+      setPlayers([]);
+      return;
+    }
+
+    const { data: profiles, error: profileError } =
+      await supabase
+        .from('profiles')
+        .select('id, username')
+        .in('id', userIds);
+
+    if (profileError) {
+      setMessage(profileError.message);
+      return;
+    }
+
+    setPlayers(
+      userIds.map(id => ({
+        id,
+        username:
+          profiles?.find(profile => profile.id === id)
+            ?.username || 'Joueur'
+      }))
+    );
   }
 
-  loadPlayers(room.id);
+  // Actualiser automatiquement les joueurs
+  useEffect(() => {
+    if (!room?.id) {
+      setPlayers([]);
+      return;
+    }
 
-  const interval = setInterval(() => {
-    loadPlayers(room.id);
-  }, 2000);
+    let active = true;
 
-  return () => clearInterval(interval);
-}, [room?.id]);
+    async function refreshPlayers() {
+      if (active) {
+        await loadPlayers(room.id);
+      }
+    }
 
-async function loadPlayers(roomId) {
-  const { data, error } = await supabase
-    .from('room_players')
-    .select('user_id')
-    .eq('room_id', roomId);
+    refreshPlayers();
 
-  if (error) {
-    setMessage(error.message);
-    return;
+    const interval = setInterval(
+      refreshPlayers,
+      2000
+    );
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [room?.id]);
+
+  // Synchroniser le statut de la partie
+  useEffect(() => {
+    if (!room?.id) return;
+
+    let active = true;
+    const roomId = room.id;
+
+    async function checkGameStatus() {
+      const { data, error } = await supabase
+        .from('rooms')
+        .select('status')
+        .eq('id', roomId)
+        .maybeSingle();
+
+      if (!active || error || !data) return;
+
+      setRoom(previous => {
+        if (!previous || previous.id !== roomId) {
+          return previous;
+        }
+
+        if (previous.status === data.status) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          status: data.status
+        };
+      });
+    }
+
+    checkGameStatus();
+
+    const interval = setInterval(
+      checkGameStatus,
+      2000
+    );
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [room?.id]);
+
+  // Lancer la partie
+  async function startGame() {
+    if (!room || !session?.user) return;
+
+    if (room.host_id !== session.user.id) {
+      setMessage(
+        "Seul l'hôte peut lancer la partie."
+      );
+      return;
+    }
+
+    if (players.length < 2) {
+      setMessage(
+        'Il faut au moins 2 joueurs pour commencer.'
+      );
+      return;
+    }
+
+    if (room.status !== 'waiting') {
+      return;
+    }
+
+    setBusy(true);
+    setMessage('');
+
+    try {
+      const { data, error } = await supabase
+        .from('rooms')
+        .update({
+          status: 'playing'
+        })
+        .eq('id', room.id)
+        .eq('host_id', session.user.id)
+        .eq('status', 'waiting')
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setRoom(data);
+      setMessage('La partie est lancée !');
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  const userIds = (data || []).map(p => p.user_id);
-
-  if (userIds.length === 0) {
-    setPlayers([]);
-    return;
-  }
-
-  const { data: profiles, error: profileError } = await supabase
-    .from('profiles')
-    .select('id, username')
-    .in('id', userIds);
-
-  if (profileError) {
-    setMessage(profileError.message);
-    return;
-  }
-
-  setPlayers(
-    userIds.map(id => ({
-      id,
-      username:
-        profiles?.find(p => p.id === id)?.username ||
-        'Joueur'
-    }))
-  );
-}
-
+  // Déconnexion
   async function signOut() {
     setMessage('');
+
     const { error } = await supabase.auth.signOut();
-    if (error) setMessage(error.message);
+
+    if (error) {
+      setMessage(error.message);
+    }
   }
 
+  // Écran de chargement
   if (loading) {
     return (
       <main className="container">
@@ -336,6 +466,7 @@ async function loadPlayers(roomId) {
     );
   }
 
+  // Écran de connexion
   if (!session) {
     return (
       <main className="container">
@@ -346,12 +477,17 @@ async function loadPlayers(roomId) {
 
         <section className="welcome">
           <p className="subtitle">BIENVENUE</p>
+
           <h1>Prêt à jouer ?</h1>
+
           <p className="description">
             Connecte-toi pour rejoindre tes amis.
           </p>
 
-          <label htmlFor="email">Adresse e-mail</label>
+          <label htmlFor="email">
+            Adresse e-mail
+          </label>
+
           <input
             id="email"
             type="email"
@@ -360,7 +496,10 @@ async function loadPlayers(roomId) {
             placeholder="ton@email.com"
           />
 
-          <label htmlFor="password">Mot de passe</label>
+          <label htmlFor="password">
+            Mot de passe
+          </label>
+
           <input
             id="password"
             type="password"
@@ -392,30 +531,46 @@ async function loadPlayers(roomId) {
     );
   }
 
+  // Écran principal
   return (
     <main className="container">
       <header>
         <span className="logo">PETIT BAC</span>
-        <button className="secondary" onClick={signOut}>
+
+        <button
+          className="secondary"
+          onClick={signOut}
+        >
           Déconnexion
         </button>
       </header>
 
       {room ? (
         <section className="welcome">
-          <p className="subtitle">SALON PRIVÉ</p>
+          <p className="subtitle">
+            SALON PRIVÉ
+          </p>
+
           <h1>Salon {room.code}</h1>
+
           <p className="description">
-            Partage ce code avec tes amis pour qu'ils
-            puissent retrouver ton salon.
+            Partage ce code avec tes amis pour
+            qu'ils puissent retrouver ton salon.
           </p>
 
           <div className="buttons">
             <button
               onClick={() =>
-                navigator.clipboard.writeText(room.code)
-                  .then(() => setMessage('Code copié !'))
-                  .catch(() => setMessage('Copie le code affiché.'))
+                navigator.clipboard
+                  .writeText(room.code)
+                  .then(() =>
+                    setMessage('Code copié !')
+                  )
+                  .catch(() =>
+                    setMessage(
+                      'Copie le code affiché.'
+                    )
+                  )
               }
             >
               Copier le code
@@ -432,45 +587,98 @@ async function loadPlayers(roomId) {
             </button>
           </div>
 
-          
-<div>
-  <h3>Joueurs dans le salon ({players.length})</h3>
+          <div>
+            <h3>
+              Joueurs dans le salon ({players.length})
+            </h3>
 
-  {players.map((player) => (
-    <p key={player.id}>
-      👤 {player.username}
-      {player.id === room.host_id ? ' 👑 Hôte' : ''}
-    </p>
-  ))}
-</div>
+            {players.map(player => (
+              <p key={player.id}>
+                👤 {player.username}
+                {player.id === room.host_id
+                  ? ' 👑 Hôte'
+                  : ''}
+              </p>
+            ))}
+          </div>
 
+          {room.status === 'waiting' ? (
+            room.host_id === session.user.id ? (
+              <div className="buttons">
+                <button
+                  disabled={
+                    busy || players.length < 2
+                  }
+                  onClick={startGame}
+                >
+                  {busy
+                    ? 'Lancement...'
+                    : 'Lancer la partie'}
+                </button>
+
+                {players.length < 2 && (
+                  <p>
+                    En attente d'un deuxième joueur...
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="description">
+                En attente du lancement par l'hôte...
+              </p>
+            )
+          ) : (
+            <div>
+              <h2>La partie est lancée !</h2>
+
+              <p className="description">
+                Préparation des catégories et
+                de la première lettre...
+              </p>
+            </div>
+          )}
 
           <p role="status">{message}</p>
         </section>
       ) : (
         <section className="welcome">
-          <p className="subtitle">MON ESPACE</p>
+          <p className="subtitle">
+            MON ESPACE
+          </p>
+
           <h1>Bienvenue !</h1>
+
           <p className="description">
             Ton compte est connecté.
           </p>
 
-          <label htmlFor="pseudo">Ton pseudo</label>
+          <label htmlFor="pseudo">
+            Ton pseudo
+          </label>
+
           <input
             id="pseudo"
             value={pseudo}
-            onChange={e => setPseudo(e.target.value)}
+            onChange={e =>
+              setPseudo(e.target.value)
+            }
             placeholder="Choisis ton pseudo"
           />
 
           <div className="buttons">
-            <button disabled={busy} onClick={savePseudo}>
+            <button
+              disabled={busy}
+              onClick={savePseudo}
+            >
               Enregistrer mon pseudo
             </button>
           </div>
 
           <div className="buttons">
-            <button disabled={busy} onClick={createRoom}>
+            <button
+              disabled={busy}
+              onClick={createRoom}
+            >
               Créer une partie
             </button>
 
@@ -479,7 +687,9 @@ async function loadPlayers(roomId) {
                 aria-label="Code du salon"
                 value={code}
                 onChange={e =>
-                  setCode(e.target.value.toUpperCase())
+                  setCode(
+                    e.target.value.toUpperCase()
+                  )
                 }
                 placeholder="Code du salon"
                 maxLength={6}
