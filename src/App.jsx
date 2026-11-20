@@ -1,56 +1,71 @@
 
-import React, { useEffect, useState } from 'react';
-import { supabase } from './supabase';
+import React, { useEffect, useState } from "react";
+import { supabase } from "./supabase";
 
-const CATEGORIES = [
-  'Prénom', 'Animal', 'Pays', 'Ville',
-  'Métier', 'Objet', 'Aliment', 'Sport',
-  'Célébrité', 'Film', 'Série', 'Marque',
-  'Vêtement', 'Plante', 'Instrument',
-  'Personnage fictif', 'Jeu vidéo',
-  'Moyen de transport', 'Boisson',
-  'Livre', 'Couleur', 'Fruit',
-  'Légume', 'Équipe sportive'
-];
+const LETTERS = "ABCDEFGHIJKLMNOPRSTUV";
 
-const LETTERS = 'ABCDEFGHIJKLMNOPRSTUV';
-
-function randomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function makeCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const values = new Uint32Array(6);
   crypto.getRandomValues(values);
-  return Array.from(values, n => chars[n % chars.length]).join('');
+  return Array.from(values, n => chars[n % chars.length]).join("");
 }
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [pseudo, setPseudo] = useState('');
-  const [code, setCode] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [pseudo, setPseudo] = useState("");
+  const [code, setCode] = useState("");
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
   const [answers, setAnswers] = useState({});
   const [answersReady, setAnswersReady] = useState(false);
   const [results, setResults] = useState([]);
-  const [message, setMessage] = useState('');
+  const [votes, setVotes] = useState([]);
+  const [chat, setChat] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [stats, setStats] = useState([]);
+  const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [spinning, setSpinning] = useState(false);
-  const [fakeLetter, setFakeLetter] = useState('A');
-  const [fakeCategory, setFakeCategory] = useState('Animal');
+  const [fakeLetter, setFakeLetter] = useState("A");
 
   const userId = session?.user?.id;
   const isHost = !!room && room.host_id === userId;
   const categories = room?.categories || [];
-  const playing = room?.status === 'playing';
-  const reviewing = room?.status === 'review';
-  const finished = room?.status === 'finished';
+  const playing = room?.status === "playing";
+  const reviewing = room?.status === "review";
+  const finished = room?.status === "finished";
+  const finalized = !!room?.review_finalized;
 
-  const allFilled = categories.length === 6 &&
-    categories.every(c => (answers[c] || '').trim().length > 0);
+  const allFilled =
+    categories.length === 6 &&
+    categories.every(c => (answers[c] || "").trim().length > 0);
+
+  const panel = {
+    marginTop: 24,
+    padding: 22,
+    border: "1px solid #ddd",
+    borderRadius: 12,
+    textAlign: "left"
+  };
+
+  const field = {
+    width: "100%",
+    boxSizing: "border-box",
+    marginTop: 7,
+    marginBottom: 15
+  };
+
+  const fullButton = {
+    width: "100%",
+    marginTop: 12
+  };
 
   // AUTHENTIFICATION
+
   useEffect(() => {
     let active = true;
 
@@ -73,9 +88,10 @@ export default function App() {
   }, []);
 
   // PROFIL
+
   useEffect(() => {
     if (!userId) {
-      setPseudo('');
+      setPseudo("");
       setRoom(null);
       return;
     }
@@ -83,12 +99,12 @@ export default function App() {
     let active = true;
 
     supabase
-      .from('profiles')
-      .select('username')
-      .eq('id', userId)
+      .from("profiles")
+      .select("username")
+      .eq("id", userId)
       .maybeSingle()
       .then(({ data }) => {
-        if (active) setPseudo(data?.username || '');
+        if (active) setPseudo(data?.username || "");
       });
 
     return () => {
@@ -98,30 +114,29 @@ export default function App() {
 
   async function handleAuth(action) {
     if (!email.trim() || !password) {
-      setMessage('Entre ton e-mail et ton mot de passe.');
+      setMessage("Entre ton e-mail et ton mot de passe.");
       return;
     }
 
     setBusy(true);
-    setMessage('');
+    setMessage("");
 
     try {
-      const { error } = action === 'signup'
-        ? await supabase.auth.signUp({
-            email: email.trim(),
-            password
-          })
-        : await supabase.auth.signInWithPassword({
-            email: email.trim(),
-            password
-          });
+      const { error } =
+        action === "signup"
+          ? await supabase.auth.signUp({
+              email: email.trim(),
+              password
+            })
+          : await supabase.auth.signInWithPassword({
+              email: email.trim(),
+              password
+            });
 
       if (error) throw error;
 
-      if (action === 'signup') {
-        setMessage(
-          'Compte créé ! Confirme ton e-mail si nécessaire.'
-        );
+      if (action === "signup") {
+        setMessage("Compte créé ! Vérifie ton e-mail si nécessaire.");
       }
     } catch (e) {
       setMessage(e.message);
@@ -132,23 +147,23 @@ export default function App() {
 
   async function savePseudo() {
     if (!userId || !pseudo.trim()) {
-      setMessage('Choisis un pseudo.');
+      setMessage("Choisis un pseudo.");
       return;
     }
 
     setBusy(true);
-    setMessage('');
+    setMessage("");
 
     try {
       const { error } = await supabase
-        .from('profiles')
+        .from("profiles")
         .upsert({
           id: userId,
           username: pseudo.trim()
         });
 
       if (error) throw error;
-      setMessage('Pseudo enregistré !');
+      setMessage("Pseudo enregistré !");
     } catch (e) {
       setMessage(e.message);
     } finally {
@@ -156,25 +171,27 @@ export default function App() {
     }
   }
 
+  // SALONS
+
   async function createRoom() {
     if (!userId || !pseudo.trim()) {
-      setMessage('Connecte-toi et enregistre un pseudo.');
+      setMessage("Enregistre un pseudo avant de jouer.");
       return;
     }
 
     setBusy(true);
-    setMessage('');
+    setMessage("");
 
     try {
       let created = null;
 
       for (let i = 0; i < 5; i++) {
         const { data, error } = await supabase
-          .from('rooms')
+          .from("rooms")
           .insert({
-            code: randomCode(),
+            code: makeCode(),
             host_id: userId,
-            status: 'waiting'
+            status: "waiting"
           })
           .select()
           .single();
@@ -184,21 +201,24 @@ export default function App() {
           break;
         }
 
-        if (error.code !== '23505') throw error;
+        if (error.code !== "23505") throw error;
       }
 
       if (!created) {
-        throw new Error('Impossible de créer le salon.');
+        throw new Error("Impossible de créer le salon.");
       }
 
       const { error } = await supabase
-        .from('room_players')
-        .upsert({
-          room_id: created.id,
-          user_id: userId
-        }, {
-          onConflict: 'room_id,user_id'
-        });
+        .from("room_players")
+        .upsert(
+          {
+            room_id: created.id,
+            user_id: userId
+          },
+          {
+            onConflict: "room_id,user_id"
+          }
+        );
 
       if (error) throw error;
 
@@ -213,40 +233,43 @@ export default function App() {
 
   async function joinRoom() {
     if (!userId || !pseudo.trim()) {
-      setMessage('Enregistre un pseudo avant de jouer.');
+      setMessage("Enregistre un pseudo avant de jouer.");
       return;
     }
 
     setBusy(true);
-    setMessage('');
+    setMessage("");
 
     try {
       const { data, error } = await supabase
-        .from('rooms')
-        .select('*')
-        .eq('code', code.trim().toUpperCase())
+        .from("rooms")
+        .select("*")
+        .eq("code", code.trim().toUpperCase())
         .maybeSingle();
 
       if (error) throw error;
-      if (!data) throw new Error('Salon introuvable.');
+      if (!data) throw new Error("Salon introuvable.");
 
-      if (data.status !== 'waiting') {
-        throw new Error('Cette partie a déjà commencé.');
+      if (data.status !== "waiting") {
+        throw new Error("Cette partie a déjà commencé.");
       }
 
       const { error: joinError } = await supabase
-        .from('room_players')
-        .upsert({
-          room_id: data.id,
-          user_id: userId
-        }, {
-          onConflict: 'room_id,user_id'
-        });
+        .from("room_players")
+        .upsert(
+          {
+            room_id: data.id,
+            user_id: userId
+          },
+          {
+            onConflict: "room_id,user_id"
+          }
+        );
 
       if (joinError) throw joinError;
 
       setRoom(data);
-      setMessage('');
+      setMessage("");
     } catch (e) {
       setMessage(e.message);
     } finally {
@@ -254,11 +277,105 @@ export default function App() {
     }
   }
 
-  // SYNCHRONISATION DES SALONS
+  // STATISTIQUES GLOBALES
+
+  useEffect(() => {
+    if (!userId) {
+      setStats([]);
+      return;
+    }
+
+    let active = true;
+
+    async function loadStats() {
+      const { data: completed } = await supabase
+        .from("rooms")
+        .select("id")
+        .eq("status", "finished");
+
+      const roomIds = (completed || []).map(r => r.id);
+
+      if (!roomIds.length) {
+        if (active) setStats([]);
+        return;
+      }
+
+      const { data: participations } = await supabase
+        .from("room_players")
+        .select("room_id,user_id,score")
+        .in("room_id", roomIds);
+
+      const entries = participations || [];
+      const ids = [...new Set(entries.map(p => p.user_id))];
+
+      if (!ids.length) {
+        if (active) setStats([]);
+        return;
+      }
+
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id,username")
+        .in("id", ids);
+
+      const table = {};
+
+      entries.forEach(p => {
+        if (!table[p.user_id]) {
+          table[p.user_id] = {
+            id: p.user_id,
+            username:
+              profiles?.find(x => x.id === p.user_id)?.username ||
+              "Joueur",
+            games: 0,
+            wins: 0,
+            points: 0
+          };
+        }
+
+        table[p.user_id].games++;
+        table[p.user_id].points += p.score;
+      });
+
+      for (const roomId of roomIds) {
+        const members = entries.filter(p => p.room_id === roomId);
+
+        if (!members.length) continue;
+
+        const best = Math.max(...members.map(p => p.score));
+
+        members
+          .filter(p => p.score === best)
+          .forEach(p => {
+            table[p.user_id].wins++;
+          });
+      }
+
+      if (active) {
+        setStats(
+          Object.values(table).sort(
+            (a, b) => b.points - a.points
+          )
+        );
+      }
+    }
+
+    loadStats();
+
+    const interval = setInterval(loadStats, 10000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [userId]);
+
+  // SYNCHRONISATION DU SALON ET DU CHAT
+
   useEffect(() => {
     if (!room?.id) {
       setPlayers([]);
-      setResults([]);
+      setChat([]);
       return;
     }
 
@@ -266,59 +383,75 @@ export default function App() {
     const roomId = room.id;
 
     async function refresh() {
-      const [roomResponse, playerResponse] =
+      const [roomRes, playerRes, chatRes] =
         await Promise.all([
           supabase
-            .from('rooms')
-            .select('*')
-            .eq('id', roomId)
+            .from("rooms")
+            .select("*")
+            .eq("id", roomId)
             .maybeSingle(),
+
           supabase
-            .from('room_players')
-            .select('user_id,score')
-            .eq('room_id', roomId)
+            .from("room_players")
+            .select("user_id,score")
+            .eq("room_id", roomId),
+
+          supabase
+            .from("chat_messages")
+            .select("id,user_id,content,created_at")
+            .eq("room_id", roomId)
+            .order("created_at", { ascending: false })
+            .limit(50)
         ]);
 
       if (!active) return;
 
-      if (roomResponse.data) {
-        setRoom(previous => {
-          if (!previous || previous.id !== roomId) {
-            return previous;
-          }
-          return roomResponse.data;
-        });
+      if (roomRes.data) {
+        setRoom(old =>
+          old?.id === roomId ? roomRes.data : old
+        );
       }
 
-      if (playerResponse.error) return;
-
-      const entries = playerResponse.data || [];
-      const ids = entries.map(p => p.user_id);
+      const entries = playerRes.data || [];
+      const ids = [...new Set(entries.map(p => p.user_id))];
 
       let profiles = [];
 
       if (ids.length) {
         const response = await supabase
-          .from('profiles')
-          .select('id,username')
-          .in('id', ids);
+          .from("profiles")
+          .select("id,username")
+          .in("id", ids);
 
         profiles = response.data || [];
       }
 
       if (!active) return;
 
+      const nameOf = id =>
+        profiles.find(p => p.id === id)?.username || "Joueur";
+
       setPlayers(
-        entries.map(p => ({
-          ...p,
-          username:
-            profiles.find(x => x.id === p.user_id)
-              ?.username || 'Joueur'
-        })).sort((a, b) => b.score - a.score)
+        entries
+          .map(p => ({
+            ...p,
+            username: nameOf(p.user_id)
+          }))
+          .sort((a, b) => b.score - a.score)
+      );
+
+      setChat(
+        (chatRes.data || [])
+          .map(m => ({
+            ...m,
+            username: nameOf(m.user_id)
+          }))
+          .reverse()
       );
     }
 
     refresh();
+
     const interval = setInterval(refresh, 1500);
 
     return () => {
@@ -327,7 +460,8 @@ export default function App() {
     };
   }, [room?.id]);
 
-  // RÉCUPÉRER LES RÉPONSES À CHAQUE MANCHE
+  // RÉPONSES DU JOUEUR
+
   useEffect(() => {
     if (!room?.id || !playing || !userId) {
       setAnswersReady(false);
@@ -339,26 +473,24 @@ export default function App() {
     setAnswersReady(false);
     setAnswers({});
 
-    async function restore() {
-      const { data } = await supabase
-        .from('game_answers')
-        .select('category,answer')
-        .eq('room_id', room.id)
-        .eq('round_number', room.round_number)
-        .eq('user_id', userId);
+    supabase
+      .from("game_answers")
+      .select("category,answer")
+      .eq("room_id", room.id)
+      .eq("round_number", room.round_number)
+      .eq("user_id", userId)
+      .then(({ data }) => {
+        if (!active) return;
 
-      if (!active) return;
+        const restored = {};
 
-      const restored = {};
-      (data || []).forEach(a => {
-        restored[a.category] = a.answer;
+        (data || []).forEach(a => {
+          restored[a.category] = a.answer;
+        });
+
+        setAnswers(restored);
+        setAnswersReady(true);
       });
-
-      setAnswers(restored);
-      setAnswersReady(true);
-    }
-
-    restore();
 
     return () => {
       active = false;
@@ -366,38 +498,41 @@ export default function App() {
   }, [room?.id, room?.round_number, playing, userId]);
 
   // SAUVEGARDE AUTOMATIQUE DES RÉPONSES
+
   useEffect(() => {
     if (
-      !room?.id ||
       !playing ||
       !answersReady ||
+      !room?.id ||
       !userId ||
       categories.length !== 6
-    ) return;
+    ) {
+      return;
+    }
 
-    const roomId = room.id;
-    const roundNumber = room.round_number;
+    const currentRoom = room.id;
+    const currentRound = room.round_number;
     const currentAnswers = { ...answers };
     const currentCategories = [...categories];
 
     const timer = setTimeout(async () => {
       const rows = currentCategories.map(category => ({
-        room_id: roomId,
-        round_number: roundNumber,
+        room_id: currentRoom,
+        round_number: currentRound,
         user_id: userId,
         category,
-        answer: (currentAnswers[category] || '').slice(0, 100)
+        answer: (currentAnswers[category] || "").slice(0, 100)
       }));
 
       const { error } = await supabase
-        .from('game_answers')
+        .from("game_answers")
         .upsert(rows, {
           onConflict:
-            'room_id,round_number,user_id,category'
+            "room_id,round_number,user_id,category"
         });
 
       if (error) {
-        console.warn('Sauvegarde des réponses :', error.message);
+        console.warn("Sauvegarde :", error.message);
       }
     }, 400);
 
@@ -411,7 +546,8 @@ export default function App() {
     userId
   ]);
 
-  // ROULETTE VISUELLE DES CATÉGORIES ET LETTRES
+  // ANIMATION DE LA LETTRE
+
   useEffect(() => {
     if (!playing || !room?.id) {
       setSpinning(false);
@@ -419,6 +555,7 @@ export default function App() {
     }
 
     setSpinning(true);
+
     let ticks = 0;
 
     const interval = setInterval(() => {
@@ -426,10 +563,6 @@ export default function App() {
 
       setFakeLetter(
         LETTERS[Math.floor(Math.random() * LETTERS.length)]
-      );
-
-      setFakeCategory(
-        CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)]
       );
 
       if (ticks >= 16) {
@@ -441,30 +574,51 @@ export default function App() {
     return () => clearInterval(interval);
   }, [room?.id, room?.round_number, playing]);
 
-  // RÉSULTATS APRÈS STOP
+  // RÉSULTATS ET VOTES
+
   useEffect(() => {
     if (!room?.id || (!reviewing && !finished)) {
       setResults([]);
+      setVotes([]);
       return;
     }
 
     let active = true;
+    const roomId = room.id;
+    const round = room.round_number;
 
-    async function loadResults() {
-      const { data, error } = await supabase
-        .from('game_answers')
-        .select('user_id,category,answer,points')
-        .eq('room_id', room.id)
-        .eq('round_number', room.round_number);
+    async function refreshReview() {
+      const { data: answerRows } = await supabase
+        .from("game_answers")
+        .select("id,user_id,category,answer,points")
+        .eq("room_id", roomId)
+        .eq("round_number", round);
 
-      if (active && !error) {
-        setResults(data || []);
+      if (!active) return;
+
+      const rows = answerRows || [];
+      setResults(rows);
+
+      const ids = rows.map(r => r.id);
+
+      if (!ids.length) {
+        setVotes([]);
+        return;
+      }
+
+      const { data: voteRows } = await supabase
+        .from("answer_votes")
+        .select("answer_id,voter_id,is_valid")
+        .in("answer_id", ids);
+
+      if (active) {
+        setVotes(voteRows || []);
       }
     }
 
-    loadResults();
+    refreshReview();
 
-    const interval = setInterval(loadResults, 1500);
+    const interval = setInterval(refreshReview, 1500);
 
     return () => {
       active = false;
@@ -477,18 +631,20 @@ export default function App() {
     finished
   ]);
 
-  // APPELS DES FONCTIONS SÉCURISÉES SUPABASE
-  async function runAction(functionName, params) {
+  // FONCTIONS DE JEU
+
+  async function runAction(name, params) {
     setBusy(true);
-    setMessage('');
+    setMessage("");
 
     try {
       const { data, error } = await supabase.rpc(
-        functionName,
+        name,
         params
       );
 
       if (error) throw error;
+
       if (data) setRoom(data);
     } catch (e) {
       setMessage(e.message);
@@ -500,7 +656,7 @@ export default function App() {
   function startGame() {
     if (!isHost || players.length < 2) return;
 
-    runAction('pb_start_game', {
+    runAction("pb_start_game", {
       p_room_id: room.id
     });
   }
@@ -508,16 +664,56 @@ export default function App() {
   function stopRound() {
     if (!allFilled || busy || spinning) return;
 
-    runAction('pb_stop_round', {
+    runAction("pb_stop_round", {
       p_room_id: room.id,
       p_answers: answers
+    });
+  }
+
+  async function vote(answerId, valid) {
+    setMessage("");
+
+    try {
+      const { error } = await supabase.rpc(
+        "pb_vote_answer",
+        {
+          p_answer_id: answerId,
+          p_valid: valid
+        }
+      );
+
+      if (error) throw error;
+
+      setVotes(previous => [
+        ...previous.filter(v =>
+          !(
+            v.answer_id === answerId &&
+            v.voter_id === userId
+          )
+        ),
+        {
+          answer_id: answerId,
+          voter_id: userId,
+          is_valid: valid
+        }
+      ]);
+    } catch (e) {
+      setMessage(e.message);
+    }
+  }
+
+  function finalizeReview() {
+    if (!isHost) return;
+
+    runAction("pb_finalize_review", {
+      p_room_id: room.id
     });
   }
 
   function nextRound() {
     if (!isHost) return;
 
-    runAction('pb_next_round', {
+    runAction("pb_next_round", {
       p_room_id: room.id
     });
   }
@@ -525,49 +721,65 @@ export default function App() {
   function finishGame() {
     if (!isHost) return;
 
-    runAction('pb_finish_game', {
+    runAction("pb_finish_game", {
       p_room_id: room.id
     });
   }
 
+  // CHAT
+
+  async function sendChat(e) {
+    e.preventDefault();
+
+    const content = chatInput.trim();
+
+    if (!content || !room?.id || !userId) return;
+
+    setChatInput("");
+
+    const { error } = await supabase
+      .from("chat_messages")
+      .insert({
+        room_id: room.id,
+        user_id: userId,
+        content: content.slice(0, 300)
+      });
+
+    if (error) {
+      setChatInput(content);
+      setMessage(error.message);
+    }
+  }
+
   async function signOut() {
     setRoom(null);
-    setMessage('');
+    setMessage("");
 
     const { error } = await supabase.auth.signOut();
 
     if (error) setMessage(error.message);
   }
 
-  // STYLES LOCAUX
-  const panel = {
-    marginTop: 24,
-    padding: 22,
-    border: '1px solid #ddd',
-    borderRadius: 12,
-    textAlign: 'left'
-  };
+  const toVote = results.filter(a =>
+    a.user_id !== userId &&
+    (a.answer || "").trim()
+  );
 
-  const bigLetter = {
-    fontSize: 80,
-    fontWeight: 900,
-    textAlign: 'center',
-    margin: '16px 0'
-  };
+  const myVoteCount = toVote.filter(a =>
+    votes.some(v =>
+      v.answer_id === a.id &&
+      v.voter_id === userId
+    )
+  ).length;
 
-  const inputStyle = {
-    width: '100%',
-    boxSizing: 'border-box',
-    marginTop: 8,
-    marginBottom: 15
-  };
+  const requiredVotes =
+    results.filter(a => (a.answer || "").trim()).length *
+    Math.max(players.length - 1, 0);
 
-  const actionButton = {
-    width: '100%',
-    marginTop: 14
-  };
+  const totalVotes = votes.length;
 
   // CHARGEMENT
+
   if (loading) {
     return (
       <main className="container">
@@ -576,7 +788,8 @@ export default function App() {
     );
   }
 
-  // CONNEXION
+  // PAGE DE CONNEXION
+
   if (!session) {
     return (
       <main className="container">
@@ -587,13 +800,15 @@ export default function App() {
 
         <section className="welcome">
           <p className="subtitle">BIENVENUE</p>
+
           <h1>Prêt à jouer ?</h1>
 
           <p className="description">
-            Connecte-toi pour jouer avec tes amis.
+            Connecte-toi pour rejoindre tes amis.
           </p>
 
           <label htmlFor="email">Adresse e-mail</label>
+
           <input
             id="email"
             type="email"
@@ -603,6 +818,7 @@ export default function App() {
           />
 
           <label htmlFor="password">Mot de passe</label>
+
           <input
             id="password"
             type="password"
@@ -614,7 +830,7 @@ export default function App() {
           <div className="buttons">
             <button
               disabled={busy}
-              onClick={() => handleAuth('signin')}
+              onClick={() => handleAuth("signin")}
             >
               Se connecter
             </button>
@@ -622,7 +838,7 @@ export default function App() {
             <button
               className="secondary"
               disabled={busy}
-              onClick={() => handleAuth('signup')}
+              onClick={() => handleAuth("signup")}
             >
               Créer un compte
             </button>
@@ -635,6 +851,7 @@ export default function App() {
   }
 
   // APPLICATION CONNECTÉE
+
   return (
     <main className="container">
       <header>
@@ -651,13 +868,11 @@ export default function App() {
       {!room ? (
         <section className="welcome">
           <p className="subtitle">MON ESPACE</p>
+
           <h1>Bienvenue !</h1>
 
-          <p className="description">
-            Crée une partie ou rejoins tes amis.
-          </p>
-
           <label htmlFor="pseudo">Ton pseudo</label>
+
           <input
             id="pseudo"
             value={pseudo}
@@ -665,14 +880,19 @@ export default function App() {
             placeholder="Choisis ton pseudo"
           />
 
-          <div className="buttons">
-            <button disabled={busy} onClick={savePseudo}>
-              Enregistrer mon pseudo
-            </button>
-          </div>
+          <button
+            style={fullButton}
+            disabled={busy}
+            onClick={savePseudo}
+          >
+            Enregistrer mon pseudo
+          </button>
 
           <div className="buttons">
-            <button disabled={busy} onClick={createRoom}>
+            <button
+              disabled={busy}
+              onClick={createRoom}
+            >
               Créer une partie
             </button>
 
@@ -697,21 +917,93 @@ export default function App() {
             </div>
           </div>
 
+          {/* STATISTIQUES PERSONNELLES */}
+
+          <div style={panel}>
+            <h2>Mes statistiques</h2>
+
+            {(() => {
+              const mine = stats.find(s => s.id === userId);
+
+              return (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: 12,
+                    textAlign: "center"
+                  }}
+                >
+                  {[
+                    ["Parties", mine?.games || 0],
+                    ["Victoires", mine?.wins || 0],
+                    ["Points", mine?.points || 0]
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <strong style={{ fontSize: 26 }}>
+                        {value}
+                      </strong>
+                      <p>{label}</p>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* CLASSEMENT GLOBAL */}
+
+          <div style={panel}>
+            <h2>🏆 Classement général</h2>
+
+            <p className="description">
+              Classement des parties terminées.
+            </p>
+
+            {stats.length === 0 && (
+              <p>
+                Aucune partie terminée pour le moment.
+              </p>
+            )}
+
+            {stats.slice(0, 20).map((player, index) => (
+              <div
+                key={player.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  padding: "10px 0",
+                  borderBottom: "1px solid #eee"
+                }}
+              >
+                <span>
+                  {index + 1}. {player.username}
+                  {player.id === userId ? " (toi)" : ""}
+                </span>
+
+                <strong>
+                  {player.points} pts
+                </strong>
+              </div>
+            ))}
+          </div>
+
           <p role="status">{message}</p>
         </section>
       ) : (
         <section className="welcome">
           <p className="subtitle">
             {finished
-              ? 'PARTIE TERMINÉE'
+              ? "PARTIE TERMINÉE"
               : playing || reviewing
               ? `MANCHE ${room.round_number}`
-              : 'SALON PRIVÉ'}
+              : "SALON PRIVÉ"}
           </p>
 
           <h1>
             {finished
-              ? 'Résultats finaux'
+              ? "Résultats finaux"
               : `Salon ${room.code}`}
           </h1>
 
@@ -721,8 +1013,12 @@ export default function App() {
               onClick={() =>
                 navigator.clipboard
                   .writeText(room.code)
-                  .then(() => setMessage('Code copié !'))
-                  .catch(() => setMessage('Copie le code.'))
+                  .then(() =>
+                    setMessage("Code copié !")
+                  )
+                  .catch(() =>
+                    setMessage("Copie le code.")
+                  )
               }
             >
               Copier le code
@@ -732,73 +1028,69 @@ export default function App() {
               className="secondary"
               onClick={() => {
                 setRoom(null);
-                setMessage('');
+                setMessage("");
               }}
             >
               Retour à l'accueil
             </button>
           </div>
 
-          {/* CLASSEMENT */}
+          {/* JOUEURS ET CLASSEMENT */}
+
           <div style={panel}>
             <h3>
-              {playing || reviewing || finished
-                ? 'Classement général'
-                : `Joueurs (${players.length})`}
+              {room.status === "waiting"
+                ? `Joueurs (${players.length})`
+                : "Classement de la partie"}
             </h3>
 
-            {players.map((player, index) => (
+            {players.map((p, i) => (
               <div
-                key={player.user_id}
+                key={p.user_id}
                 style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
+                  display: "flex",
+                  justifyContent: "space-between",
                   gap: 12,
-                  padding: '9px 0',
-                  borderBottom: '1px solid #eee'
+                  padding: "9px 0",
+                  borderBottom: "1px solid #eee"
                 }}
               >
                 <span>
-                  {index + 1}. {player.username}
-                  {player.user_id === room.host_id
-                    ? ' 👑'
-                    : ''}
-                  {player.user_id === userId
-                    ? ' (toi)'
-                    : ''}
+                  {i + 1}. {p.username}
+                  {p.user_id === room.host_id
+                    ? " 👑"
+                    : ""}
+                  {p.user_id === userId
+                    ? " (toi)"
+                    : ""}
                 </span>
 
-                <strong>{player.score} pts</strong>
+                <strong>
+                  {p.score} pts
+                </strong>
               </div>
             ))}
           </div>
 
           {/* SALLE D'ATTENTE */}
-          {room.status === 'waiting' && (
+
+          {room.status === "waiting" && (
             <div style={panel}>
               <h2>En attente des joueurs</h2>
 
               <p>
-                Partage le code <strong>{room.code}</strong>
-                {' '}avec tes amis.
+                Partage le code{" "}
+                <strong>{room.code}</strong>.
               </p>
 
               {isHost ? (
-                <>
-                  <button
-                    style={actionButton}
-                    disabled={busy || players.length < 2}
-                    onClick={startGame}
-                  >
-                    Lancer la partie
-                  </button>
-
-                  {players.length < 2 && (
-                    <p>
-                      Il faut au moins 2 joueurs.
-                    </p>
-                  )}
-                </>
+                <button
+                  style={fullButton}
+                  disabled={busy || players.length < 2}
+                  onClick={startGame}
+                >
+                  Lancer la partie
+                </button>
               ) : (
                 <p>
                   En attente du lancement par l'hôte...
@@ -808,6 +1100,7 @@ export default function App() {
           )}
 
           {/* MANCHE EN COURS */}
+
           {playing && (
             <div style={panel}>
               <h2>
@@ -815,192 +1108,357 @@ export default function App() {
               </h2>
 
               {spinning ? (
-                <>
-                  <p style={{ textAlign: 'center' }}>
-                    Tirage des catégories et de la lettre...
-                  </p>
-
-                  <div style={bigLetter}>
-                    {fakeLetter}
-                  </div>
-
-                  <p style={{ textAlign: 'center' }}>
-                    {fakeCategory}
-                  </p>
-                </>
+                <div
+                  style={{
+                    fontSize: 80,
+                    fontWeight: 900,
+                    textAlign: "center",
+                    padding: 35
+                  }}
+                >
+                  {fakeLetter}
+                </div>
               ) : (
                 <>
-                  <p style={{ textAlign: 'center' }}>
+                  <p style={{ textAlign: "center" }}>
                     LETTRE À UTILISER
                   </p>
 
-                  <div style={bigLetter}>
+                  <div
+                    style={{
+                      fontSize: 80,
+                      fontWeight: 900,
+                      textAlign: "center"
+                    }}
+                  >
                     {room.letter}
                   </div>
 
-                  <p style={{ textAlign: 'center' }}>
+                  <p style={{ textAlign: "center" }}>
                     Remplis les six catégories.
-                    Le premier à terminer peut arrêter la manche.
                   </p>
 
                   {categories.map(category => (
                     <div key={category}>
-                      <label htmlFor={`answer-${category}`}>
+                      <label
+                        htmlFor={`answer-${category}`}
+                      >
                         {category}
                       </label>
 
                       <input
                         id={`answer-${category}`}
-                        style={inputStyle}
-                        disabled={!answersReady || busy}
+                        style={field}
                         maxLength={100}
-                        value={answers[category] || ''}
-                        onChange={e => {
-                          const value = e.target.value;
-                          setAnswers(previous => ({
-                            ...previous,
-                            [category]: value
-                          }));
-                        }}
-                        placeholder={
-                          `Mot commençant par ${room.letter}`
+                        disabled={!answersReady || busy}
+                        value={answers[category] || ""}
+                        onChange={e =>
+                          setAnswers(old => ({
+                            ...old,
+                            [category]: e.target.value
+                          }))
                         }
+                        placeholder={`Mot en ${room.letter}`}
                       />
                     </div>
                   ))}
 
                   <button
-                    style={actionButton}
+                    style={fullButton}
                     disabled={
-                      !answersReady ||
                       !allFilled ||
+                      !answersReady ||
                       busy
                     }
                     onClick={stopRound}
                   >
-                    {busy
-                      ? 'Arrêt en cours...'
-                      : 'STOP !'}
+                    STOP !
                   </button>
 
-                  {!allFilled && (
-                    <p style={{
-                      textAlign: 'center',
-                      color: '#777'
-                    }}>
-                      Remplis les 6 cases pour activer STOP.
-                    </p>
-                  )}
+                  <p style={{ textAlign: "center" }}>
+                    Le premier à remplir ses six cases
+                    peut arrêter la manche.
+                  </p>
                 </>
               )}
             </div>
           )}
 
-          {/* RÉSULTATS DE LA MANCHE */}
+          {/* VALIDATION DES RÉPONSES */}
+
           {(reviewing || finished) && (
             <div style={panel}>
               <h2>
-                Résultats de la manche {room.round_number}
+                Validation — manche{" "}
+                {room.round_number}
               </h2>
 
-              <p>
-                Les points sont calculés automatiquement.
-              </p>
+              {!finalized && reviewing && (
+                <p>
+                  Vote pour accepter ou refuser les
+                  réponses des autres joueurs.
+                  <strong>
+                    {" "}
+                    {myVoteCount}/{toVote.length}
+                    {" "}votes effectués.
+                  </strong>
+                </p>
+              )}
 
               {categories.map(category => (
                 <div
                   key={category}
                   style={{
-                    borderBottom: '1px solid #ddd',
-                    padding: '12px 0'
+                    borderBottom: "1px solid #ddd",
+                    padding: "14px 0"
                   }}
                 >
                   <h3>{category}</h3>
 
                   {players.map(player => {
-                    const answer = results.find(
-                      a =>
-                        a.user_id === player.user_id &&
-                        a.category === category
+                    const answer = results.find(a =>
+                      a.user_id === player.user_id &&
+                      a.category === category
+                    );
+
+                    const ownVote = votes.find(v =>
+                      v.answer_id === answer?.id &&
+                      v.voter_id === userId
                     );
 
                     return (
                       <div
                         key={player.user_id}
                         style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          gap: 12,
-                          marginTop: 8
+                          padding: "8px 0"
                         }}
                       >
-                        <span>
-                          <strong>{player.username}</strong>
-                          {' : '}
-                          {answer?.answer || '—'}
-                        </span>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent:
+                              "space-between",
+                            gap: 12
+                          }}
+                        >
+                          <span>
+                            <strong>
+                              {player.username}
+                            </strong>
+                            {" : "}
+                            {answer?.answer || "—"}
+                          </span>
 
-                        <strong>
-                          +{answer?.points || 0}
-                        </strong>
+                          {finalized && (
+                            <strong>
+                              +{answer?.points || 0}
+                            </strong>
+                          )}
+                        </div>
+
+                        {reviewing &&
+                          !finalized &&
+                          answer?.id &&
+                          answer.answer.trim() &&
+                          player.user_id !== userId && (
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: 10,
+                                marginTop: 8
+                              }}
+                            >
+                              <button
+                                className={
+                                  ownVote?.is_valid === true
+                                    ? ""
+                                    : "secondary"
+                                }
+                                onClick={() =>
+                                  vote(answer.id, true)
+                                }
+                              >
+                                ✓ Valide
+                              </button>
+
+                              <button
+                                className={
+                                  ownVote?.is_valid === false
+                                    ? ""
+                                    : "secondary"
+                                }
+                                onClick={() =>
+                                  vote(answer.id, false)
+                                }
+                              >
+                                ✕ Refusé
+                              </button>
+                            </div>
+                          )}
                       </div>
                     );
                   })}
                 </div>
               ))}
 
-              {reviewing && isHost && (
+              {reviewing && isHost && !finalized && (
                 <>
-                  <button
-                    style={actionButton}
-                    disabled={busy}
-                    onClick={nextRound}
-                  >
-                    Manche suivante
-                  </button>
+                  <p>
+                    Votes reçus :{" "}
+                    {totalVotes}/{requiredVotes}
+                  </p>
 
                   <button
-                    className="secondary"
-                    style={actionButton}
-                    disabled={busy}
-                    onClick={finishGame}
+                    style={fullButton}
+                    disabled={
+                      busy ||
+                      totalVotes < requiredVotes ||
+                      results.length === 0
+                    }
+                    onClick={finalizeReview}
                   >
-                    Terminer la partie
+                    Valider les résultats
                   </button>
                 </>
               )}
 
-              {reviewing && !isHost && (
-                <p>
-                  En attente de la prochaine manche...
-                </p>
-              )}
+              {reviewing &&
+                !isHost &&
+                !finalized && (
+                  <p>
+                    En attente de la validation
+                    par l'hôte...
+                  </p>
+                )}
+
+              {reviewing &&
+                finalized &&
+                isHost && (
+                  <>
+                    <button
+                      style={fullButton}
+                      disabled={busy}
+                      onClick={nextRound}
+                    >
+                      Manche suivante
+                    </button>
+
+                    <button
+                      className="secondary"
+                      style={fullButton}
+                      disabled={busy}
+                      onClick={finishGame}
+                    >
+                      Terminer la partie
+                    </button>
+                  </>
+                )}
+
+              {reviewing &&
+                finalized &&
+                !isHost && (
+                  <p>
+                    Résultats validés !
+                    En attente de l'hôte.
+                  </p>
+                )}
 
               {finished && (
-                <div style={{ textAlign: 'center' }}>
-                  <h2>🏆 Partie terminée !</h2>
+                <div
+                  style={{
+                    textAlign: "center"
+                  }}
+                >
+                  <h2>
+                    🏆 Partie terminée !
+                  </h2>
 
                   {players.length > 0 && (
                     <p>
-                      Vainqueur :{' '}
+                      Vainqueur :{" "}
                       <strong>
                         {players
                           .filter(p =>
                             p.score === players[0].score
                           )
                           .map(p => p.username)
-                          .join(' et ')}
+                          .join(" et ")}
                       </strong>
                     </p>
                   )}
-
-                  <p>
-                    Bravo à tous les participants !
-                  </p>
                 </div>
               )}
             </div>
           )}
+
+          {/* CHAT DU SALON */}
+
+          <div style={panel}>
+            <h2>💬 Chat du salon</h2>
+
+            <div
+              style={{
+                height: 220,
+                overflowY: "auto",
+                padding: 12,
+                border: "1px solid #eee",
+                borderRadius: 8,
+                background: "#fafafa"
+              }}
+            >
+              {chat.length === 0 && (
+                <p>
+                  Aucun message pour le moment.
+                </p>
+              )}
+
+              {chat.map(m => (
+                <p
+                  key={m.id}
+                  style={{
+                    margin: "7px 0",
+                    overflowWrap: "anywhere"
+                  }}
+                >
+                  <strong>
+                    {m.username} :
+                  </strong>{" "}
+                  {m.content}
+                </p>
+              ))}
+            </div>
+
+            <form
+              onSubmit={sendChat}
+              style={{
+                display: "flex",
+                gap: 10,
+                marginTop: 12
+              }}
+            >
+              <input
+                aria-label="Message du chat"
+                value={chatInput}
+                onChange={e =>
+                  setChatInput(e.target.value)
+                }
+                maxLength={300}
+                placeholder="Écris un message..."
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  margin: 0
+                }}
+              />
+
+              <button
+                type="submit"
+                disabled={!chatInput.trim()}
+              >
+                Envoyer
+              </button>
+            </form>
+          </div>
 
           <p role="status">{message}</p>
         </section>
