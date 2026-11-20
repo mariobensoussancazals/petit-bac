@@ -184,9 +184,21 @@ export default function App() {
         );
       }
 
-      setRoom(created);
-      setCode(created.code);
-      setMessage('Salon créé avec succès !');
+      const { error: playerError } = await supabase
+  .from('room_players')
+  .upsert(
+    {
+      room_id: created.id,
+      user_id: session.user.id
+    },
+    { onConflict: 'room_id,user_id' }
+  );
+
+if (playerError) throw playerError;
+
+setRoom(created);
+setCode(created.code);
+setMessage('Salon créé avec succès !');
     } catch (error) {
       setMessage(error.message);
     } finally {
@@ -234,9 +246,21 @@ export default function App() {
         return;
       }
 
-      setRoom(data);
-      setCode(data.code);
-      setMessage('Salon trouvé !');
+      const { error: playerError } = await supabase
+  .from('room_players')
+  .upsert(
+    {
+      room_id: data.id,
+      user_id: session.user.id
+    },
+    { onConflict: 'room_id,user_id' }
+  );
+
+if (playerError) throw playerError;
+
+setRoom(data);
+setCode(data.code);
+setMessage('Tu as rejoint le salon !');
     } catch (error) {
       setMessage(error.message);
     } finally {
