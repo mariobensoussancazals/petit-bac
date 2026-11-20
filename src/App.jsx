@@ -52,6 +52,40 @@ export default function App() {
     }
   }
 
+async function createRoom() {
+  if (!session?.user) {
+    setMessage('Tu dois être connecté.');
+    return;
+  }
+
+  setBusy(true);
+  setMessage('');
+
+  const roomCode = Math.random()
+    .toString(36)
+    .substring(2, 8)
+    .toUpperCase();
+
+  const { data, error } = await supabase
+    .from('rooms')
+    .insert({
+      code: roomCode,
+      host_id: session.user.id,
+      status: 'waiting'
+    })
+    .select()
+    .single();
+
+  if (error) {
+    setMessage(error.message);
+  } else {
+    setCode(data.code);
+    setMessage('Salon créé ! Code : ' + data.code);
+  }
+
+  setBusy(false);
+}
+
   async function savePseudo() {
     if (!pseudo.trim()) {
       setMessage('Choisis un pseudo.');
@@ -233,12 +267,9 @@ export default function App() {
         </div>
 
         <div className="buttons">
-          <button
-            onClick={createRoom}
-            }
-          >
-            Créer une partie
-          </button>
+          <button onClick={createRoom} disabled={busy}>
+  Créer une partie
+</button>
 
           <div className="join">
             <input
@@ -355,11 +386,7 @@ export default function App() {
         </div>
 
         <div className="buttons">
-          <button
-            onClick={() =>
-              setMessage('Création des salons à venir !')
-            }
-          >
+          <button onClick={createRoom} disabled={busy}>
             Créer une partie
           </button>
 
