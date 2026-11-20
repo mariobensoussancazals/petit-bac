@@ -2,6 +2,26 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from './supabase';
 
+const CATEGORIES = [
+  'Prénom', 'Animal', 'Pays', 'Ville',
+  'Métier', 'Objet', 'Aliment', 'Sport',
+  'Célébrité', 'Film', 'Série', 'Marque',
+  'Vêtement', 'Plante', 'Instrument',
+  'Personnage fictif', 'Jeu vidéo',
+  'Moyen de transport', 'Boisson',
+  'Livre', 'Couleur', 'Fruit',
+  'Légume', 'Équipe sportive'
+];
+
+const LETTERS = 'ABCDEFGHIJKLMNOPRSTUV';
+
+function randomCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const values = new Uint32Array(6);
+  crypto.getRandomValues(values);
+  return Array.from(values, n => chars[n % chars.length]).join('');
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -11,23 +31,39 @@ export default function App() {
   const [code, setCode] = useState('');
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
+  const [answers, setAnswers] = useState({});
+  const [answersReady, setAnswersReady] = useState(false);
+  const [results, setResults] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [spinning, setSpinning] = useState(false);
+  const [fakeLetter, setFakeLetter] = useState('A');
+  const [fakeCategory, setFakeCategory] = useState('Animal');
 
-  // Connexion et déconnexion
+  const userId = session?.user?.id;
+  const isHost = !!room && room.host_id === userId;
+  const categories = room?.categories || [];
+  const playing = room?.status === 'playing';
+  const reviewing = room?.status === 'review';
+  const finished = room?.status === 'finished';
+
+  const allFilled = categories.length === 6 &&
+    categories.every(c => (answers[c] || '').trim().length > 0);
+
+  // AUTHENTIFICATION
   useEffect(() => {
     let active = true;
 
     supabase.auth.getSession().then(({ data, error }) => {
       if (!active) return;
       if (error) setMessage(error.message);
-      setSession(data?.session ?? null);
+      setSession(data?.session || null);
       setLoading(false);
     });
 
     const { data: listener } =
-      supabase.auth.onAuthStateChange((_event, nextSession) => {
-        setSession(nextSession);
+      supabase.auth.onAuthStateChange((_event, next) => {
+        setSession(next);
       });
 
     return () => {
@@ -36,9 +72,9 @@ export default function App() {
     };
   }, []);
 
-  // Récupérer le pseudo
+  // PROFIL
   useEffect(() => {
-    if (!session?.user?.id) {
+    if (!userId) {
       setPseudo('');
       setRoom(null);
       return;
@@ -46,33 +82,23 @@ export default function App() {
 
     let active = true;
 
-    async function loadProfile() {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('username')
-        .eq('id', session.user.id)
-        .maybeSingle();
-
-      if (!active) return;
-
-      if (error) {
-        setMessage(error.message);
-      } else {
-        setPseudo(data?.username ?? '');
-      }
-    }
-
-    loadProfile();
+    supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active) setPseudo(data?.username || '');
+      });
 
     return () => {
       active = false;
     };
-  }, [session?.user?.id]);
+  }, [userId]);
 
-  // Créer un compte ou se connecter
   async function handleAuth(action) {
     if (!email.trim() || !password) {
-      setMessage('Renseigne ton e-mail et ton mot de passe.');
+      setMessage('Entre ton e-mail et ton mot de passe.');
       return;
     }
 
@@ -94,23 +120,18 @@ export default function App() {
 
       if (action === 'signup') {
         setMessage(
-          'Compte créé ! Vérifie tes e-mails si une confirmation est demandée.'
+          'Compte créé ! Confirme ton e-mail si nécessaire.'
         );
       }
-    } catch (error) {
-      setMessage(error.message);
+    } catch (e) {
+      setMessage(e.message);
     } finally {
       setBusy(false);
     }
   }
 
-  // Enregistrer son pseudo
   async function savePseudo() {
-    if (!session?.user) return;
-
-    const username = pseudo.trim();
-
-    if (!username) {
+    if (!userId || !pseudo.trim()) {
       setMessage('Choisis un pseudo.');
       return;
     }
@@ -122,42 +143,22 @@ export default function App() {
       const { error } = await supabase
         .from('profiles')
         .upsert({
-          id: session.user.id,
-          username
+          id: userId,
+          username: pseudo.trim()
         });
 
       if (error) throw error;
-
-      setPseudo(username);
       setMessage('Pseudo enregistré !');
-    } catch (error) {
-      setMessage(error.message);
+    } catch (e) {
+      setMessage(e.message);
     } finally {
       setBusy(false);
     }
   }
 
-  // Générer un code de salon
-  function generateCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    const values = new Uint32Array(6);
-    crypto.getRandomValues(values);
-
-    return Array.from(
-      values,
-      value => chars[value % chars.length]
-    ).join('');
-  }
-
-  // Créer un salon
   async function createRoom() {
-    if (!session?.user) {
-      setMessage('Tu dois être connecté.');
-      return;
-    }
-
-    if (!pseudo.trim()) {
-      setMessage('Enregistre un pseudo avant de jouer.');
+    if (!userId || !pseudo.trim()) {
+      setMessage('Connecte-toi et enregistre un pseudo.');
       return;
     }
 
@@ -167,14 +168,12 @@ export default function App() {
     try {
       let created = null;
 
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const roomCode = generateCode();
-
+      for (let i = 0; i < 5; i++) {
         const { data, error } = await supabase
           .from('rooms')
           .insert({
-            code: roomCode,
-            host_id: session.user.id,
+            code: randomCode(),
+            host_id: userId,
             status: 'waiting'
           })
           .select()
@@ -185,55 +184,36 @@ export default function App() {
           break;
         }
 
-        if (error.code !== '23505') {
-          throw error;
-        }
+        if (error.code !== '23505') throw error;
       }
 
       if (!created) {
-        throw new Error(
-          'Impossible de générer un code unique. Réessaie.'
-        );
+        throw new Error('Impossible de créer le salon.');
       }
 
-      const { error: playerError } = await supabase
+      const { error } = await supabase
         .from('room_players')
-        .upsert(
-          {
-            room_id: created.id,
-            user_id: session.user.id
-          },
-          { onConflict: 'room_id,user_id' }
-        );
+        .upsert({
+          room_id: created.id,
+          user_id: userId
+        }, {
+          onConflict: 'room_id,user_id'
+        });
 
-      if (playerError) throw playerError;
+      if (error) throw error;
 
       setRoom(created);
       setCode(created.code);
-      setMessage('Salon créé avec succès !');
-    } catch (error) {
-      setMessage(error.message);
+    } catch (e) {
+      setMessage(e.message);
     } finally {
       setBusy(false);
     }
   }
 
-  // Rejoindre un salon
   async function joinRoom() {
-    if (!session?.user) {
-      setMessage('Tu dois être connecté.');
-      return;
-    }
-
-    if (!pseudo.trim()) {
+    if (!userId || !pseudo.trim()) {
       setMessage('Enregistre un pseudo avant de jouer.');
-      return;
-    }
-
-    const roomCode = code.trim().toUpperCase();
-
-    if (!roomCode) {
-      setMessage('Entre un code de salon.');
       return;
     }
 
@@ -244,153 +224,102 @@ export default function App() {
       const { data, error } = await supabase
         .from('rooms')
         .select('*')
-        .eq('code', roomCode)
+        .eq('code', code.trim().toUpperCase())
         .maybeSingle();
 
       if (error) throw error;
-
-      if (!data) {
-        setMessage('Aucun salon trouvé avec ce code.');
-        return;
-      }
+      if (!data) throw new Error('Salon introuvable.');
 
       if (data.status !== 'waiting') {
-        setMessage(
-          'Cette partie a déjà commencé ou est terminée.'
-        );
-        return;
+        throw new Error('Cette partie a déjà commencé.');
       }
 
-      const { error: playerError } = await supabase
+      const { error: joinError } = await supabase
         .from('room_players')
-        .upsert(
-          {
-            room_id: data.id,
-            user_id: session.user.id
-          },
-          { onConflict: 'room_id,user_id' }
-        );
+        .upsert({
+          room_id: data.id,
+          user_id: userId
+        }, {
+          onConflict: 'room_id,user_id'
+        });
 
-      if (playerError) throw playerError;
+      if (joinError) throw joinError;
 
       setRoom(data);
-      setCode(data.code);
-      setMessage('Tu as rejoint le salon !');
-    } catch (error) {
-      setMessage(error.message);
+      setMessage('');
+    } catch (e) {
+      setMessage(e.message);
     } finally {
       setBusy(false);
     }
   }
 
-  // Charger les joueurs du salon
-  async function loadPlayers(roomId) {
-    const { data, error } = await supabase
-      .from('room_players')
-      .select('user_id')
-      .eq('room_id', roomId);
-
-    if (error) {
-      setMessage(error.message);
-      return;
-    }
-
-    const userIds = (data || []).map(
-      player => player.user_id
-    );
-
-    if (userIds.length === 0) {
-      setPlayers([]);
-      return;
-    }
-
-    const { data: profiles, error: profileError } =
-      await supabase
-        .from('profiles')
-        .select('id, username')
-        .in('id', userIds);
-
-    if (profileError) {
-      setMessage(profileError.message);
-      return;
-    }
-
-    setPlayers(
-      userIds.map(id => ({
-        id,
-        username:
-          profiles?.find(profile => profile.id === id)
-            ?.username || 'Joueur'
-      }))
-    );
-  }
-
-  // Actualiser automatiquement les joueurs
+  // SYNCHRONISATION DES SALONS
   useEffect(() => {
     if (!room?.id) {
       setPlayers([]);
+      setResults([]);
       return;
     }
-
-    let active = true;
-
-    async function refreshPlayers() {
-      if (active) {
-        await loadPlayers(room.id);
-      }
-    }
-
-    refreshPlayers();
-
-    const interval = setInterval(
-      refreshPlayers,
-      2000
-    );
-
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, [room?.id]);
-
-  // Synchroniser le statut de la partie
-  useEffect(() => {
-    if (!room?.id) return;
 
     let active = true;
     const roomId = room.id;
 
-    async function checkGameStatus() {
-      const { data, error } = await supabase
-        .from('rooms')
-        .select('status')
-        .eq('id', roomId)
-        .maybeSingle();
+    async function refresh() {
+      const [roomResponse, playerResponse] =
+        await Promise.all([
+          supabase
+            .from('rooms')
+            .select('*')
+            .eq('id', roomId)
+            .maybeSingle(),
+          supabase
+            .from('room_players')
+            .select('user_id,score')
+            .eq('room_id', roomId)
+        ]);
 
-      if (!active || error || !data) return;
+      if (!active) return;
 
-      setRoom(previous => {
-        if (!previous || previous.id !== roomId) {
-          return previous;
-        }
+      if (roomResponse.data) {
+        setRoom(previous => {
+          if (!previous || previous.id !== roomId) {
+            return previous;
+          }
+          return roomResponse.data;
+        });
+      }
 
-        if (previous.status === data.status) {
-          return previous;
-        }
+      if (playerResponse.error) return;
 
-        return {
-          ...previous,
-          status: data.status
-        };
-      });
+      const entries = playerResponse.data || [];
+      const ids = entries.map(p => p.user_id);
+
+      let profiles = [];
+
+      if (ids.length) {
+        const response = await supabase
+          .from('profiles')
+          .select('id,username')
+          .in('id', ids);
+
+        profiles = response.data || [];
+      }
+
+      if (!active) return;
+
+      setPlayers(
+        entries.map(p => ({
+          ...p,
+          username:
+            profiles.find(x => x.id === p.user_id)
+              ?.username || 'Joueur'
+        })).sort((a, b) => b.score - a.score)
+      );
     }
 
-    checkGameStatus();
-
-    const interval = setInterval(
-      checkGameStatus,
-      2000
-    );
+    refresh();
+    const interval = setInterval(refresh, 1500);
 
     return () => {
       active = false;
@@ -398,66 +327,247 @@ export default function App() {
     };
   }, [room?.id]);
 
-  // Lancer la partie
-  async function startGame() {
-    if (!room || !session?.user) return;
+  // RÉCUPÉRER LES RÉPONSES À CHAQUE MANCHE
+  useEffect(() => {
+    if (!room?.id || !playing || !userId) {
+      setAnswersReady(false);
+      return;
+    }
 
-    if (room.host_id !== session.user.id) {
-      setMessage(
-        "Seul l'hôte peut lancer la partie."
+    let active = true;
+
+    setAnswersReady(false);
+    setAnswers({});
+
+    async function restore() {
+      const { data } = await supabase
+        .from('game_answers')
+        .select('category,answer')
+        .eq('room_id', room.id)
+        .eq('round_number', room.round_number)
+        .eq('user_id', userId);
+
+      if (!active) return;
+
+      const restored = {};
+      (data || []).forEach(a => {
+        restored[a.category] = a.answer;
+      });
+
+      setAnswers(restored);
+      setAnswersReady(true);
+    }
+
+    restore();
+
+    return () => {
+      active = false;
+    };
+  }, [room?.id, room?.round_number, playing, userId]);
+
+  // SAUVEGARDE AUTOMATIQUE DES RÉPONSES
+  useEffect(() => {
+    if (
+      !room?.id ||
+      !playing ||
+      !answersReady ||
+      !userId ||
+      categories.length !== 6
+    ) return;
+
+    const roomId = room.id;
+    const roundNumber = room.round_number;
+    const currentAnswers = { ...answers };
+    const currentCategories = [...categories];
+
+    const timer = setTimeout(async () => {
+      const rows = currentCategories.map(category => ({
+        room_id: roomId,
+        round_number: roundNumber,
+        user_id: userId,
+        category,
+        answer: (currentAnswers[category] || '').slice(0, 100)
+      }));
+
+      const { error } = await supabase
+        .from('game_answers')
+        .upsert(rows, {
+          onConflict:
+            'room_id,round_number,user_id,category'
+        });
+
+      if (error) {
+        console.warn('Sauvegarde des réponses :', error.message);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [
+    answers,
+    answersReady,
+    playing,
+    room?.id,
+    room?.round_number,
+    userId
+  ]);
+
+  // ROULETTE VISUELLE DES CATÉGORIES ET LETTRES
+  useEffect(() => {
+    if (!playing || !room?.id) {
+      setSpinning(false);
+      return;
+    }
+
+    setSpinning(true);
+    let ticks = 0;
+
+    const interval = setInterval(() => {
+      ticks++;
+
+      setFakeLetter(
+        LETTERS[Math.floor(Math.random() * LETTERS.length)]
       );
-      return;
-    }
 
-    if (players.length < 2) {
-      setMessage(
-        'Il faut au moins 2 joueurs pour commencer.'
+      setFakeCategory(
+        CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)]
       );
+
+      if (ticks >= 16) {
+        clearInterval(interval);
+        setSpinning(false);
+      }
+    }, 90);
+
+    return () => clearInterval(interval);
+  }, [room?.id, room?.round_number, playing]);
+
+  // RÉSULTATS APRÈS STOP
+  useEffect(() => {
+    if (!room?.id || (!reviewing && !finished)) {
+      setResults([]);
       return;
     }
 
-    if (room.status !== 'waiting') {
-      return;
+    let active = true;
+
+    async function loadResults() {
+      const { data, error } = await supabase
+        .from('game_answers')
+        .select('user_id,category,answer,points')
+        .eq('room_id', room.id)
+        .eq('round_number', room.round_number);
+
+      if (active && !error) {
+        setResults(data || []);
+      }
     }
 
+    loadResults();
+
+    const interval = setInterval(loadResults, 1500);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [
+    room?.id,
+    room?.round_number,
+    reviewing,
+    finished
+  ]);
+
+  // APPELS DES FONCTIONS SÉCURISÉES SUPABASE
+  async function runAction(functionName, params) {
     setBusy(true);
     setMessage('');
 
     try {
-      const { data, error } = await supabase
-        .from('rooms')
-        .update({
-          status: 'playing'
-        })
-        .eq('id', room.id)
-        .eq('host_id', session.user.id)
-        .eq('status', 'waiting')
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc(
+        functionName,
+        params
+      );
 
       if (error) throw error;
-
-      setRoom(data);
-      setMessage('La partie est lancée !');
-    } catch (error) {
-      setMessage(error.message);
+      if (data) setRoom(data);
+    } catch (e) {
+      setMessage(e.message);
     } finally {
       setBusy(false);
     }
   }
 
-  // Déconnexion
+  function startGame() {
+    if (!isHost || players.length < 2) return;
+
+    runAction('pb_start_game', {
+      p_room_id: room.id
+    });
+  }
+
+  function stopRound() {
+    if (!allFilled || busy || spinning) return;
+
+    runAction('pb_stop_round', {
+      p_room_id: room.id,
+      p_answers: answers
+    });
+  }
+
+  function nextRound() {
+    if (!isHost) return;
+
+    runAction('pb_next_round', {
+      p_room_id: room.id
+    });
+  }
+
+  function finishGame() {
+    if (!isHost) return;
+
+    runAction('pb_finish_game', {
+      p_room_id: room.id
+    });
+  }
+
   async function signOut() {
+    setRoom(null);
     setMessage('');
 
     const { error } = await supabase.auth.signOut();
 
-    if (error) {
-      setMessage(error.message);
-    }
+    if (error) setMessage(error.message);
   }
 
-  // Écran de chargement
+  // STYLES LOCAUX
+  const panel = {
+    marginTop: 24,
+    padding: 22,
+    border: '1px solid #ddd',
+    borderRadius: 12,
+    textAlign: 'left'
+  };
+
+  const bigLetter = {
+    fontSize: 80,
+    fontWeight: 900,
+    textAlign: 'center',
+    margin: '16px 0'
+  };
+
+  const inputStyle = {
+    width: '100%',
+    boxSizing: 'border-box',
+    marginTop: 8,
+    marginBottom: 15
+  };
+
+  const actionButton = {
+    width: '100%',
+    marginTop: 14
+  };
+
+  // CHARGEMENT
   if (loading) {
     return (
       <main className="container">
@@ -466,7 +576,7 @@ export default function App() {
     );
   }
 
-  // Écran de connexion
+  // CONNEXION
   if (!session) {
     return (
       <main className="container">
@@ -477,17 +587,13 @@ export default function App() {
 
         <section className="welcome">
           <p className="subtitle">BIENVENUE</p>
-
           <h1>Prêt à jouer ?</h1>
 
           <p className="description">
-            Connecte-toi pour rejoindre tes amis.
+            Connecte-toi pour jouer avec tes amis.
           </p>
 
-          <label htmlFor="email">
-            Adresse e-mail
-          </label>
-
+          <label htmlFor="email">Adresse e-mail</label>
           <input
             id="email"
             type="email"
@@ -496,10 +602,7 @@ export default function App() {
             placeholder="ton@email.com"
           />
 
-          <label htmlFor="password">
-            Mot de passe
-          </label>
-
+          <label htmlFor="password">Mot de passe</label>
           <input
             id="password"
             type="password"
@@ -531,7 +634,7 @@ export default function App() {
     );
   }
 
-  // Écran principal
+  // APPLICATION CONNECTÉE
   return (
     <main className="container">
       <header>
@@ -545,32 +648,81 @@ export default function App() {
         </button>
       </header>
 
-      {room ? (
+      {!room ? (
         <section className="welcome">
-          <p className="subtitle">
-            SALON PRIVÉ
-          </p>
-
-          <h1>Salon {room.code}</h1>
+          <p className="subtitle">MON ESPACE</p>
+          <h1>Bienvenue !</h1>
 
           <p className="description">
-            Partage ce code avec tes amis pour
-            qu'ils puissent retrouver ton salon.
+            Crée une partie ou rejoins tes amis.
           </p>
+
+          <label htmlFor="pseudo">Ton pseudo</label>
+          <input
+            id="pseudo"
+            value={pseudo}
+            onChange={e => setPseudo(e.target.value)}
+            placeholder="Choisis ton pseudo"
+          />
+
+          <div className="buttons">
+            <button disabled={busy} onClick={savePseudo}>
+              Enregistrer mon pseudo
+            </button>
+          </div>
+
+          <div className="buttons">
+            <button disabled={busy} onClick={createRoom}>
+              Créer une partie
+            </button>
+
+            <div className="join">
+              <input
+                aria-label="Code du salon"
+                value={code}
+                onChange={e =>
+                  setCode(e.target.value.toUpperCase())
+                }
+                placeholder="Code du salon"
+                maxLength={6}
+              />
+
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={joinRoom}
+              >
+                Rejoindre
+              </button>
+            </div>
+          </div>
+
+          <p role="status">{message}</p>
+        </section>
+      ) : (
+        <section className="welcome">
+          <p className="subtitle">
+            {finished
+              ? 'PARTIE TERMINÉE'
+              : playing || reviewing
+              ? `MANCHE ${room.round_number}`
+              : 'SALON PRIVÉ'}
+          </p>
+
+          <h1>
+            {finished
+              ? 'Résultats finaux'
+              : `Salon ${room.code}`}
+          </h1>
 
           <div className="buttons">
             <button
+              className="secondary"
               onClick={() =>
                 navigator.clipboard
                   .writeText(room.code)
-                  .then(() =>
-                    setMessage('Code copié !')
-                  )
-                  .catch(() =>
-                    setMessage(
-                      'Copie le code affiché.'
-                    )
-                  )
+                  .then(() => setMessage('Code copié !'))
+                  .catch(() => setMessage('Copie le code.'))
               }
             >
               Copier le code
@@ -587,123 +739,268 @@ export default function App() {
             </button>
           </div>
 
-          <div>
+          {/* CLASSEMENT */}
+          <div style={panel}>
             <h3>
-              Joueurs dans le salon ({players.length})
+              {playing || reviewing || finished
+                ? 'Classement général'
+                : `Joueurs (${players.length})`}
             </h3>
 
-            {players.map(player => (
-              <p key={player.id}>
-                👤 {player.username}
-                {player.id === room.host_id
-                  ? ' 👑 Hôte'
-                  : ''}
-              </p>
+            {players.map((player, index) => (
+              <div
+                key={player.user_id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  padding: '9px 0',
+                  borderBottom: '1px solid #eee'
+                }}
+              >
+                <span>
+                  {index + 1}. {player.username}
+                  {player.user_id === room.host_id
+                    ? ' 👑'
+                    : ''}
+                  {player.user_id === userId
+                    ? ' (toi)'
+                    : ''}
+                </span>
+
+                <strong>{player.score} pts</strong>
+              </div>
             ))}
           </div>
 
-          {room.status === 'waiting' ? (
-            room.host_id === session.user.id ? (
-              <div className="buttons">
-                <button
-                  disabled={
-                    busy || players.length < 2
-                  }
-                  onClick={startGame}
-                >
-                  {busy
-                    ? 'Lancement...'
-                    : 'Lancer la partie'}
-                </button>
+          {/* SALLE D'ATTENTE */}
+          {room.status === 'waiting' && (
+            <div style={panel}>
+              <h2>En attente des joueurs</h2>
 
-                {players.length < 2 && (
-                  <p>
-                    En attente d'un deuxième joueur...
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p className="description">
-                En attente du lancement par l'hôte...
+              <p>
+                Partage le code <strong>{room.code}</strong>
+                {' '}avec tes amis.
               </p>
-            )
-          ) : (
-            <div>
-              <h2>La partie est lancée !</h2>
 
-              <p className="description">
-                Préparation des catégories et
-                de la première lettre...
-              </p>
+              {isHost ? (
+                <>
+                  <button
+                    style={actionButton}
+                    disabled={busy || players.length < 2}
+                    onClick={startGame}
+                  >
+                    Lancer la partie
+                  </button>
+
+                  {players.length < 2 && (
+                    <p>
+                      Il faut au moins 2 joueurs.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p>
+                  En attente du lancement par l'hôte...
+                </p>
+              )}
             </div>
           )}
 
-          <p role="status">{message}</p>
-        </section>
-      ) : (
-        <section className="welcome">
-          <p className="subtitle">
-            MON ESPACE
-          </p>
+          {/* MANCHE EN COURS */}
+          {playing && (
+            <div style={panel}>
+              <h2>
+                Manche {room.round_number}
+              </h2>
 
-          <h1>Bienvenue !</h1>
+              {spinning ? (
+                <>
+                  <p style={{ textAlign: 'center' }}>
+                    Tirage des catégories et de la lettre...
+                  </p>
 
-          <p className="description">
-            Ton compte est connecté.
-          </p>
+                  <div style={bigLetter}>
+                    {fakeLetter}
+                  </div>
 
-          <label htmlFor="pseudo">
-            Ton pseudo
-          </label>
+                  <p style={{ textAlign: 'center' }}>
+                    {fakeCategory}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p style={{ textAlign: 'center' }}>
+                    LETTRE À UTILISER
+                  </p>
 
-          <input
-            id="pseudo"
-            value={pseudo}
-            onChange={e =>
-              setPseudo(e.target.value)
-            }
-            placeholder="Choisis ton pseudo"
-          />
+                  <div style={bigLetter}>
+                    {room.letter}
+                  </div>
 
-          <div className="buttons">
-            <button
-              disabled={busy}
-              onClick={savePseudo}
-            >
-              Enregistrer mon pseudo
-            </button>
-          </div>
+                  <p style={{ textAlign: 'center' }}>
+                    Remplis les six catégories.
+                    Le premier à terminer peut arrêter la manche.
+                  </p>
 
-          <div className="buttons">
-            <button
-              disabled={busy}
-              onClick={createRoom}
-            >
-              Créer une partie
-            </button>
+                  {categories.map(category => (
+                    <div key={category}>
+                      <label htmlFor={`answer-${category}`}>
+                        {category}
+                      </label>
 
-            <div className="join">
-              <input
-                aria-label="Code du salon"
-                value={code}
-                onChange={e =>
-                  setCode(
-                    e.target.value.toUpperCase()
-                  )
-                }
-                placeholder="Code du salon"
-                maxLength={6}
-              />
+                      <input
+                        id={`answer-${category}`}
+                        style={inputStyle}
+                        disabled={!answersReady || busy}
+                        maxLength={100}
+                        value={answers[category] || ''}
+                        onChange={e => {
+                          const value = e.target.value;
+                          setAnswers(previous => ({
+                            ...previous,
+                            [category]: value
+                          }));
+                        }}
+                        placeholder={
+                          `Mot commençant par ${room.letter}`
+                        }
+                      />
+                    </div>
+                  ))}
 
-              <button
-                className="secondary"
-                disabled={busy}
-                onClick={joinRoom}
-              >
-                Rejoindre
-              </button>
+                  <button
+                    style={actionButton}
+                    disabled={
+                      !answersReady ||
+                      !allFilled ||
+                      busy
+                    }
+                    onClick={stopRound}
+                  >
+                    {busy
+                      ? 'Arrêt en cours...'
+                      : 'STOP !'}
+                  </button>
+
+                  {!allFilled && (
+                    <p style={{
+                      textAlign: 'center',
+                      color: '#777'
+                    }}>
+                      Remplis les 6 cases pour activer STOP.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* RÉSULTATS DE LA MANCHE */}
+          {(reviewing || finished) && (
+            <div style={panel}>
+              <h2>
+                Résultats de la manche {room.round_number}
+              </h2>
+
+              <p>
+                Les points sont calculés automatiquement.
+              </p>
+
+              {categories.map(category => (
+                <div
+                  key={category}
+                  style={{
+                    borderBottom: '1px solid #ddd',
+                    padding: '12px 0'
+                  }}
+                >
+                  <h3>{category}</h3>
+
+                  {players.map(player => {
+                    const answer = results.find(
+                      a =>
+                        a.user_id === player.user_id &&
+                        a.category === category
+                    );
+
+                    return (
+                      <div
+                        key={player.user_id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                          marginTop: 8
+                        }}
+                      >
+                        <span>
+                          <strong>{player.username}</strong>
+                          {' : '}
+                          {answer?.answer || '—'}
+                        </span>
+
+                        <strong>
+                          +{answer?.points || 0}
+                        </strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+              {reviewing && isHost && (
+                <>
+                  <button
+                    style={actionButton}
+                    disabled={busy}
+                    onClick={nextRound}
+                  >
+                    Manche suivante
+                  </button>
+
+                  <button
+                    className="secondary"
+                    style={actionButton}
+                    disabled={busy}
+                    onClick={finishGame}
+                  >
+                    Terminer la partie
+                  </button>
+                </>
+              )}
+
+              {reviewing && !isHost && (
+                <p>
+                  En attente de la prochaine manche...
+                </p>
+              )}
+
+              {finished && (
+                <div style={{ textAlign: 'center' }}>
+                  <h2>🏆 Partie terminée !</h2>
+
+                  {players.length > 0 && (
+                    <p>
+                      Vainqueur :{' '}
+                      <strong>
+                        {players
+                          .filter(p =>
+                            p.score === players[0].score
+                          )
+                          .map(p => p.username)
+                          .join(' et ')}
+                      </strong>
+                    </p>
+                  )}
+
+                  <p>
+                    Bravo à tous les participants !
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           <p role="status">{message}</p>
         </section>
