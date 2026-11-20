@@ -10,6 +10,7 @@ export default function App() {
   const [pseudo, setPseudo] = useState('');
   const [code, setCode] = useState('');
   const [room, setRoom] = useState(null);
+  const [players, setPlayers] = useState([]);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -268,6 +269,59 @@ setMessage('Tu as rejoint le salon !');
     }
   }
 
+useEffect(() => {
+  if (!room?.id) {
+    setPlayers([]);
+    return;
+  }
+
+  loadPlayers(room.id);
+
+  const interval = setInterval(() => {
+    loadPlayers(room.id);
+  }, 2000);
+
+  return () => clearInterval(interval);
+}, [room?.id]);
+
+async function loadPlayers(roomId) {
+  const { data, error } = await supabase
+    .from('room_players')
+    .select('user_id')
+    .eq('room_id', roomId);
+
+  if (error) {
+    setMessage(error.message);
+    return;
+  }
+
+  const userIds = (data || []).map(p => p.user_id);
+
+  if (userIds.length === 0) {
+    setPlayers([]);
+    return;
+  }
+
+  const { data: profiles, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, username')
+    .in('id', userIds);
+
+  if (profileError) {
+    setMessage(profileError.message);
+    return;
+  }
+
+  setPlayers(
+    userIds.map(id => ({
+      id,
+      username:
+        profiles?.find(p => p.id === id)?.username ||
+        'Joueur'
+    }))
+  );
+}
+
   async function signOut() {
     setMessage('');
     const { error } = await supabase.auth.signOut();
@@ -378,10 +432,18 @@ setMessage('Tu as rejoint le salon !');
             </button>
           </div>
 
-          <p className="description">
-            Le salon est accessible. La liste des joueurs
-            et le lancement des manches seront ajoutés ensuite.
-          </p>
+          
+<div>
+  <h3>Joueurs dans le salon ({players.length})</h3>
+
+  {players.map((player) => (
+    <p key={player.id}>
+      👤 {player.username}
+      {player.id === room.host_id ? ' 👑 Hôte' : ''}
+    </p>
+  ))}
+</div>
+
 
           <p role="status">{message}</p>
         </section>
